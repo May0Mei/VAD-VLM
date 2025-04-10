@@ -3,10 +3,12 @@ import json
 import copy
 import tempfile
 from typing import Dict, List
+import pickle
 
 import numpy as np
 from mmdet.datasets import DATASETS
 from mmdet3d.datasets import NuScenesDataset
+from nuscenes.nuscenes import NuScenes
 import pyquaternion
 import mmcv
 from os import path as osp
@@ -933,7 +935,7 @@ class v1CustomDetectionConfig:
         self.max_boxes_per_sample = max_boxes_per_sample
         self.mean_ap_weight = mean_ap_weight
 
-        self.class_names = self.class_range_y.keys()
+        self.class_names = list(self.class_range_y.keys())
 
     def __eq__(self, other):
         eq = True
@@ -983,6 +985,8 @@ class VADCustomNuScenesDataset(NuScenesDataset):
     MAPCLASSES = ('divider',)
     def __init__(
         self,
+        vlm_ann_path=None,
+        keep_frame_idx=None,
         queue_length=4,
         bev_size=(200, 200),
         overlap_test=False,
@@ -1000,12 +1004,37 @@ class VADCustomNuScenesDataset(NuScenesDataset):
         **kwargs
     ):
         super().__init__(*args, **kwargs)
+        self.vlm_ann_path = vlm_ann_path
+        self.keep_frame_idx = keep_frame_idx
         self.queue_length = queue_length
         self.overlap_test = overlap_test
         self.bev_size = bev_size
         self.with_attr = with_attr
         self.fut_ts = fut_ts
         self.use_pkl_result = use_pkl_result
+
+        # load vlm annotations if specified
+        if vlm_ann_path is not None:
+            file_type = vlm_ann_path.split('.')[-1]
+            if file_type == 'pkl':
+                self.vlm_ann_dict = pickle.load(open(vlm_ann_path, 'rb'))
+            elif file_type == 'pt':
+                self.vlm_ann_dict = torch.load(vlm_ann_path, map_location='cpu')
+
+        # use sparse dataset if specified
+        if keep_frame_idx is not None:
+            new_data_infos = []
+            for info in self.data_infos:
+                if info['frame_idx'] in keep_frame_idx:
+                    new_data_infos.append(info)
+            self.data_infos = new_data_infos ###sparse dataset
+
+        # build token to id dictionary
+        nusc = NuScenes(version='v1.0-trainval', dataroot=self.data_root)
+        self.scene_token2id_dict = {
+            scene['token']: int(scene['name'].split('-')[-1])
+            for scene in nusc.scene
+        }
 
         self.custom_eval_version = custom_eval_version
         # Check if config exists.
@@ -1158,6 +1187,19 @@ class VADCustomNuScenesDataset(NuScenesDataset):
                     return None
                 frame_idx = input_dict['frame_idx']
             data_queue.insert(0, copy.deepcopy(example))
+        
+        # load vlm annotations
+        scene_id = self.scene_token2id_dict[scene_token]
+        vlm_traj_id = scene_id*100 + frame_idx - self.queue_length
+        data_queue[-1]['vlm_ann'] = self.vlm_ann_dict[vlm_traj_id]
+        
+        # print("-----------------------------------------------------------")
+        # print("scene_id", scene_id)
+        # print("frame_idx", frame_idx)
+        # print("vlm_trajid", vlm_traj_id)
+        # print("data_queue length:",len(data_queue))##[3,8,13]
+        # print(data_queue[-1]['vlm_ann'])
+
         return self.union2one(data_queue)
 
     def prepare_test_data(self, index):
@@ -1400,8 +1442,13 @@ class VADCustomNuScenesDataset(NuScenesDataset):
         if self.test_mode:
             return self.prepare_test_data(idx)
         while True:
-
-            data = self.prepare_train_data(idx)
+            try:
+                data = self.prepare_train_data(idx)
+                # print("idx", idx, "is recognized!")
+            except:
+                # print(idx, "is not recognized!")
+                idx = self._rand_another(idx)
+                continue
             if data is None:
                 idx = self._rand_another(idx)
                 continue

@@ -120,7 +120,8 @@ class VAD(MVXTwoStageDetector):
                           ego_fut_masks=None,
                           ego_fut_cmd=None,
                           ego_lcf_feat=None,
-                          gt_attr_labels=None):
+                          gt_attr_labels=None,
+                          vlm_ann=None):
         """Forward function'
         Args:
             pts_feats (list[torch.Tensor]): Features of point cloud branch
@@ -140,8 +141,9 @@ class VAD(MVXTwoStageDetector):
                                   ego_his_trajs=ego_his_trajs, ego_lcf_feat=ego_lcf_feat)
         loss_inputs = [
             gt_bboxes_3d, gt_labels_3d, map_gt_bboxes_3d, map_gt_labels_3d,
-            outs, ego_fut_trajs, ego_fut_masks, ego_fut_cmd, gt_attr_labels
+            outs, ego_fut_trajs, ego_fut_masks, ego_fut_cmd, gt_attr_labels,vlm_ann
         ]
+        
         losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
         return losses
 
@@ -205,7 +207,8 @@ class VAD(MVXTwoStageDetector):
                       ego_fut_masks=None,
                       ego_fut_cmd=None,
                       ego_lcf_feat=None,
-                      gt_attr_labels=None
+                      gt_attr_labels=None,
+                      vlm_ann=None
                       ):
         """Forward training function.
         Args:
@@ -248,7 +251,7 @@ class VAD(MVXTwoStageDetector):
                                             gt_bboxes_ignore, map_gt_bboxes_ignore, prev_bev,
                                             ego_his_trajs=ego_his_trajs, ego_fut_trajs=ego_fut_trajs,
                                             ego_fut_masks=ego_fut_masks, ego_fut_cmd=ego_fut_cmd,
-                                            ego_lcf_feat=ego_lcf_feat, gt_attr_labels=gt_attr_labels)
+                                            ego_lcf_feat=ego_lcf_feat, gt_attr_labels=gt_attr_labels,vlm_ann=vlm_ann)
 
         losses.update(losses_pts)
         return losses
@@ -264,6 +267,7 @@ class VAD(MVXTwoStageDetector):
         ego_fut_cmd=None,
         ego_lcf_feat=None,
         gt_attr_labels=None,
+        vlm_ann=None,
         **kwargs
     ):
         for var, name in [(img_metas, 'img_metas')]:
@@ -303,6 +307,7 @@ class VAD(MVXTwoStageDetector):
             ego_fut_cmd=ego_fut_cmd[0],
             ego_lcf_feat=ego_lcf_feat[0],
             gt_attr_labels=gt_attr_labels,
+            vlm_ann=vlm_ann,
             **kwargs
         )
         # During inference, we save the BEV features and ego motion of each timestamp.
@@ -327,6 +332,7 @@ class VAD(MVXTwoStageDetector):
         ego_fut_cmd=None,
         ego_lcf_feat=None,
         gt_attr_labels=None,
+        vlm_ann=None,
         **kwargs
     ):
         """Test function without augmentaiton."""
@@ -346,6 +352,7 @@ class VAD(MVXTwoStageDetector):
             ego_fut_cmd=ego_fut_cmd,
             ego_lcf_feat=ego_lcf_feat,
             gt_attr_labels=gt_attr_labels,
+            vlm_ann = vlm_ann
         )
         for result_dict, pts_bbox in zip(bbox_list, bbox_pts):
             result_dict['pts_bbox'] = pts_bbox
@@ -368,6 +375,7 @@ class VAD(MVXTwoStageDetector):
         ego_fut_cmd=None,
         ego_lcf_feat=None,
         gt_attr_labels=None,
+        vlm_ann=None
     ):
         """Test function"""
         mapped_class_names = [
@@ -400,6 +408,7 @@ class VAD(MVXTwoStageDetector):
             gt_bbox = gt_bboxes_3d[0][0]
             gt_label = gt_labels_3d[0][0].to('cpu')
             gt_attr_label = gt_attr_labels[0][0].to('cpu')
+            vlm_ann = vlm_ann.to('cpu')
             fut_valid_flag = bool(fut_valid_flag[0][0])
             # filter pred bbox by score_threshold
             mask = bbox_result['scores_3d'] > score_threshold

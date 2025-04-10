@@ -429,7 +429,11 @@ class VADPerceptionTransformer(BaseModule):
         else:
             map_inter_states = map_query.unsqueeze(0)
             map_inter_references_out = map_reference_points.unsqueeze(0)
-
+        # print("inter_states", inter_states.shape)
+        # print("inter_references_out", inter_references_out.shape)
+        # print("map_inter_states", map_inter_states.shape)
+        # print("map_inter_references_out", map_inter_references_out.shape)
+        # breakpoint()
         return (
             bev_embed, inter_states, init_reference_out, inter_references_out,
             map_inter_states, map_init_reference_out, map_inter_references_out)
@@ -439,7 +443,7 @@ class VADPerceptionTransformer(BaseModule):
 class CustomTransformerDecoder(TransformerLayerSequence):
     """Implements the decoder in DETR3D transformer.
     Args:
-        return_intermediate (bool): Whether to return intermediate outputs.
+        return _intermediate (bool): Whether to return intermediate outputs.
         coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
     """
 
@@ -485,5 +489,428 @@ class CustomTransformerDecoder(TransformerLayerSequence):
 
         if self.return_intermediate:
             return torch.stack(intermediate)
-
+        # print(query.shape)
+        # breakpoint()
         return query
+    
+@TRANSFORMER_LAYER_SEQUENCE.register_module()
+class CustomTransformerDecoder_Motion_his(TransformerLayerSequence):##->BL added From [1800,256] to [1,512] ### now need [300, 6, 256] to [1, 6, 3584]
+    """Implements the decoder in DETR3D transformer.
+    Args:
+        return _intermediate (bool): Whether to return intermediate outputs.
+        coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
+    """
+
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+        super(CustomTransformerDecoder_Motion_his, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
+        self.post_mlp = nn.Sequential(
+            nn.Linear(256, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 512)
+        )#  Bowen added Make the shape change From [6,300, 256] to [1,6,3584]
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                key_padding_mask=None,
+                *args,
+                **kwargs):
+        """Forward function for `Detr3DTransformerDecoder`.
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        intermediate = []
+        for lid, layer in enumerate(self.layers):
+            query = layer(
+                query=query,
+                key=key,
+                value=value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
+                key_padding_mask=key_padding_mask,
+                *args,
+                **kwargs)
+
+            if self.return_intermediate:
+                intermediate.append(query)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+        pooled = query.mean(dim=0)
+        # ## Bowen added
+        # reshaped = queryreshape(6,300,256)
+        # pooled = torch.mean(reshaped, dim=1)
+        out=self.post_mlp(pooled)
+        out=out.unsqueeze(0)
+        return query,out
+
+
+@TRANSFORMER_LAYER_SEQUENCE.register_module()  ### [1,256] need to double check --> Bowen tomorrow
+class CustomTransformerDecoder_ego_agent_queue(TransformerLayerSequence):##BL added ->From [1,256] to [1,512]   ###now need [1,256] to [1, 6, 3584] --> this [1,256] doesn;t seems make sense
+    """Implements the decoder in DETR3D transformer.
+    Args:
+        return _intermediate (bool): Whether to return intermediate outputs.
+        coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
+    """
+
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+        super(CustomTransformerDecoder_ego_agent_queue, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
+        self.post_mlp = nn.Sequential(
+            nn.Linear(256, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 512)
+        )#Make the shape change From [1,256] to [1,512]
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                key_padding_mask=None,
+                *args,
+                **kwargs):
+        """Forward function for `Detr3DTransformerDecoder`.
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        intermediate = []
+        for lid, layer in enumerate(self.layers):
+            query = layer(
+                query=query,
+                key=key,
+                value=value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
+                key_padding_mask=key_padding_mask,
+                *args,
+                **kwargs)
+
+            if self.return_intermediate:
+                intermediate.append(query)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+        # pooled = query.mean(dim=0)
+        out_vlm=self.post_mlp(query)
+        # out=out.squeeze(0)
+        return query,out_vlm
+
+### Bowen added: probably not gonna use it for now
+@TRANSFORMER_LAYER_SEQUENCE.register_module()
+class CustomTransformerDecoder_ego_map_queue(TransformerLayerSequence):##BL added ->From [1,256] to [1,13]
+    """Implements the decoder in DETR3D transformer.
+    Args:
+        return _intermediate (bool): Whether to return intermediate outputs.
+        coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
+    """
+
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+        super(CustomTransformerDecoder_ego_map_queue, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
+        self.post_mlp = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 64),
+            nn.ReLU(inplace=True),
+            nn.Linear(64, 13)
+        )#Make the shape change From [1,256] to [1,13]
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                key_padding_mask=None,
+                *args,
+                **kwargs):
+        """Forward function for `Detr3DTransformerDecoder`.
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        intermediate = []
+        for lid, layer in enumerate(self.layers):
+            # breakpoint()
+            query = layer(
+                query=query,
+                key=key,
+                value=value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
+                key_padding_mask=key_padding_mask,
+                *args,
+                **kwargs)
+            # breakpoint()
+            if self.return_intermediate:
+                intermediate.append(query)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+        out_vlm=self.post_mlp(query)
+        return query,out_vlm
+
+
+@TRANSFORMER_LAYER_SEQUENCE.register_module() ##Bowen
+class CustomTransformerDecoder_Motion_his_agent_agent(TransformerLayerSequence):
+    """Implements the decoder in DETR3D transformer.
+    Args:
+        return _intermediate (bool): Whether to return intermediate outputs.
+        coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
+    """
+
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+        super(CustomTransformerDecoder_Motion_his_agent_agent, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
+        self.post_mlp = nn.Sequential(
+            nn.Linear(256, 256), #TODO: change to (256, 192)
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 256) #TODO: change to (192, 192)
+        )
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                key_padding_mask=None,
+                *args,
+                **kwargs):
+        """Forward function for `Detr3DTransformerDecoder`.
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        intermediate = []
+        for lid, layer in enumerate(self.layers):
+            query = layer(
+                query=query,
+                key=key,
+                value=value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
+                key_padding_mask=key_padding_mask,
+                *args,
+                **kwargs)
+
+            if self.return_intermediate:
+                intermediate.append(query)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+        pooled = query.mean(dim=0)
+        out=self.post_mlp(pooled)
+        out=out.unsqueeze(0)
+        return query,out
+
+
+@TRANSFORMER_LAYER_SEQUENCE.register_module() ## Bowen
+class CustomTransformerDecoder_Motion_his_agent_map(TransformerLayerSequence):
+    """Implements the decoder in DETR3D transformer.
+    Args:
+        return _intermediate (bool): Whether to return intermediate outputs.
+        coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
+    """
+
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+        super(CustomTransformerDecoder_Motion_his_agent_map, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
+        self.post_mlp = nn.Sequential(
+            nn.Linear(256, 256), #TODO: change to 192
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 256)
+        )
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                key_padding_mask=None,
+                *args,
+                **kwargs):
+        """Forward function for `Detr3DTransformerDecoder`.
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        intermediate = []
+        for lid, layer in enumerate(self.layers):
+            query = layer(
+                query=query,
+                key=key,
+                value=value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
+                key_padding_mask=key_padding_mask,
+                *args,
+                **kwargs)
+
+            if self.return_intermediate:
+                intermediate.append(query)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+        ### The input is [1, 1800, 256] --> different f rom agent-agent [1800, 1, 256]
+        pooled = query.mean(dim=1)
+        out=self.post_mlp(pooled)
+        out=out.unsqueeze(0)
+        return query,out
+
+
+@TRANSFORMER_LAYER_SEQUENCE.register_module() ## Bowen
+class CustomTransformerDecoder_ego_agent_planning(TransformerLayerSequence):
+    """Implements the decoder in DETR3D transformer.
+    Args:
+        return _intermediate (bool): Whether to return intermediate outputs.
+        coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
+    """
+
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+        super(CustomTransformerDecoder_ego_agent_planning, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
+        self.post_mlp = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 256)
+        )
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                key_padding_mask=None,
+                *args,
+                **kwargs):
+        """Forward function for `Detr3DTransformerDecoder`.
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        intermediate = []
+        for lid, layer in enumerate(self.layers):
+            query = layer(
+                query=query,
+                key=key,
+                value=value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
+                key_padding_mask=key_padding_mask,
+                *args,
+                **kwargs)
+
+            if self.return_intermediate:
+                intermediate.append(query)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+        # pooled = query.mean(dim=0)
+        out_vlm=self.post_mlp(query)
+        # out=out.squeeze(0)
+        return query,out_vlm
+
+
+@TRANSFORMER_LAYER_SEQUENCE.register_module() ## Bowen
+class CustomTransformerDecoder_ego_map_planning(TransformerLayerSequence):
+    """Implements the decoder in DETR3D transformer.
+    Args:
+        return _intermediate (bool): Whether to return intermediate outputs.
+        coder_norm_cfg (dict): Config of last normalization layer. Default: `LN`.
+    """
+
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+        super(CustomTransformerDecoder_ego_map_planning, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
+        self.post_mlp = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 256)
+        )
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                key_padding_mask=None,
+                *args,
+                **kwargs):
+        """Forward function for `Detr3DTransformerDecoder`.
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        intermediate = []
+        for lid, layer in enumerate(self.layers):
+            query = layer(
+                query=query,
+                key=key,
+                value=value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
+                key_padding_mask=key_padding_mask,
+                *args,
+                **kwargs)
+
+            if self.return_intermediate:
+                intermediate.append(query)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+        out_vlm=self.post_mlp(query)
+        return query,out_vlm

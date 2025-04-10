@@ -42,7 +42,7 @@ _num_levels_ = 1
 bev_h_ = 100
 bev_w_ = 100
 queue_length = 3 # each sequence contains `queue_length` frames.
-total_epochs = 60
+total_epochs = 10
 
 model = dict(
     type='VAD',
@@ -68,6 +68,7 @@ model = dict(
         relu_before_extra_convs=True),
     pts_bbox_head=dict(
         type='VADHead',
+        alignment_weights = [10,10,10], #ABLATE: perception, prediction, planning
         map_thresh=0.5,
         dis_thresh=0.2,
         pe_normalization=True,
@@ -79,7 +80,7 @@ model = dict(
         ego_lcf_feat_idx=None,
         valid_fut_ts=6,
         ego_agent_decoder=dict(
-            type='CustomTransformerDecoder',
+            type='CustomTransformerDecoder_ego_agent_planning',
             num_layers=1,
             return_intermediate=False,
             transformerlayers=dict(
@@ -95,7 +96,7 @@ model = dict(
                 ffn_dropout=0.1,
                 operation_order=('cross_attn', 'norm', 'ffn', 'norm'))),
         ego_map_decoder=dict(
-            type='CustomTransformerDecoder',
+            type='CustomTransformerDecoder_ego_map_planning',
             num_layers=1,
             return_intermediate=False,
             transformerlayers=dict(
@@ -111,7 +112,7 @@ model = dict(
                 ffn_dropout=0.1,
                 operation_order=('cross_attn', 'norm', 'ffn', 'norm'))),
         motion_decoder=dict(
-            type='CustomTransformerDecoder',
+            type='CustomTransformerDecoder_Motion_his_agent_agent',
             num_layers=1,
             return_intermediate=False,
             transformerlayers=dict(
@@ -127,7 +128,7 @@ model = dict(
                 ffn_dropout=0.1,
                 operation_order=('cross_attn', 'norm', 'ffn', 'norm'))),
         motion_map_decoder=dict(
-            type='CustomTransformerDecoder',
+            type='CustomTransformerDecoder_Motion_his_agent_map',
             num_layers=1,
             return_intermediate=False,
             transformerlayers=dict(
@@ -311,6 +312,8 @@ model = dict(
 dataset_type = 'VADCustomNuScenesDataset'
 data_root = '/n/fs/pci-sharedt/data_original/nuscenes/'
 data_root_ann = '/n/fs/vlm-driving/VAD/data/nuscenes/'
+vlm_ann_path = '/n/fs/not-fmrl/Projects/ActivePerception-FMRL/vlm_dicts_processed/0327_vlm_dicts_processed_clip.pkl' #ABLATE: 7B, adversarial, encoder
+# vlm_ann_path = '/n/fs/not-fmrl/Projects/ActivePerception-FMRL/vlm_dicts_0316/0319_vlm_dicts_processed.pt'
 
 file_client_args = dict(backend='disk')
 
@@ -363,6 +366,8 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root_ann + 'vad_nuscenes_infos_temporal_train.pkl',
+        vlm_ann_path=vlm_ann_path,
+        keep_frame_idx = [3, 8, 13], #small dataset
         pipeline=train_pipeline,
         classes=class_names,
         modality=input_modality,
@@ -432,7 +437,17 @@ log_config = dict(
     interval=100,
     hooks=[
         dict(type='TextLoggerHook'),
-        dict(type='TensorboardLoggerHook')
+        # dict(type='TensorboardLoggerHook'),
+        # dict(
+        #     type='WandbLoggerHook',
+        #     init_kwargs=dict(
+        #         project='vad-vlm',
+        #         name='experiment-0327',
+        #         config=dict(lr=2e-4, epochs=60),  # optional: track config here
+        #     ),
+        #     interval=10,
+        #     by_epoch=True,
+        # )
     ])
 # fp16 = dict(loss_scale=512.)
 # find_unused_parameters = True

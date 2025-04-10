@@ -1,6 +1,5 @@
 import copy
 from math import pi, cos, sin
-
 import torch
 import numpy as np
 import torch.nn as nn
@@ -37,6 +36,102 @@ class MLP(nn.Module):
         x = self.mlp(x)
         return x
 
+####Baiang: V1, use this should make sense. Next step: Try spatial attention if this do not work? --> For VAD_tiny version
+class ProgressiveFeatureCompressor(nn.Module):
+    def __init__(self, in_channels=256, num_views=6, out_features=512): #TODO: change to 384
+        super().__init__()
+        self.conv3d_1 = nn.Conv3d(
+            in_channels,
+            256,
+            kernel_size=(num_views, 3, 3),
+            stride=(1, 1, 1),
+            padding=(0, 1, 1)
+        )
+        self.conv2d_block = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True)
+        )
+        self.conv2d_final = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        ### Bowen: If BASE model change to the next line
+        self.linear = nn.Linear(256 * 3 * 5, out_features) ### for the tiny
+        # self.linear = nn.Linear(256 * 23 * 40, out_features) ### for teh base
+        
+    def forward(self, x):
+        x=x[0]#[B,6,256,12,20]
+        B = x.shape[0]#[B]
+        x = x.permute(0, 2, 1, 3, 4)  # [B, 256, 6, 12, 20]
+        x = self.conv3d_1(x)# [B, 256, 1, 12, 20]
+        x = F.relu(x)# [B, 256, 1, 12, 20]
+        x = x.squeeze(2)# [B, 256, 12, 20]
+        x = self.conv2d_block(x)# [B, 256, 3, 5]
+        x = self.conv2d_final(x)#[B, 256, 3, 5]
+        x = F.relu(x)
+        x = x.view(B, -1)#[B, 256*3*5]
+        x = self.linear(x)#[B, 512]
+        return x
+
+
+# class SpatialAttention(nn.Module):
+#     def __init__(self, kernel_size=7):
+#         super(SpatialAttention, self).__init__()
+#         self.conv = nn.Conv2d(2, 1, kernel_size=kernel_size, padding=kernel_size // 2)
+    
+#     def forward(self, x):
+#         avg_out = torch.mean(x, dim=1, keepdim=True)
+#         max_out, _ = torch.max(x, dim=1, keepdim=True)
+#         x_cat = torch.cat([avg_out, max_out], dim=1)
+#         attention = torch.sigmoid(self.conv(x_cat))
+#         return x * attention
+
+# class ProgressiveFeatureCompressor(nn.Module):   #### For VAD_base version
+#     def __init__(self, in_channels=256, num_views=6, out_features=512, use_attention=False):
+#         super().__init__()
+#         self.conv3d = nn.Conv3d(
+#             in_channels,
+#             256,
+#             kernel_size=(num_views, 3, 3),
+#             stride=(1, 1, 1),
+#             padding=(0, 1, 1)
+#         )
+        
+#         self.conv_block = nn.Sequential(
+#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+#             nn.BatchNorm2d(256),
+#             nn.ReLU(inplace=True)
+#         )
+        
+#         self.attention = SpatialAttention(kernel_size=7) if use_attention else nn.Identity()
+        
+#         self.pool = nn.AdaptiveAvgPool2d((3, 5))
+        
+#         self.conv_final = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        
+#         self.linear = nn.Linear(256 * 3 * 5, out_features)
+    
+#     def forward(self, x):
+#         x = x[0] 
+#         B = x.shape[0]
+        
+#         x = x.permute(0, 2, 1, 3, 4)
+#         x = self.conv3d(x)  # -> [B, 256, 1, H, W]
+#         x = F.relu(x)
+#         x = x.squeeze(2)    # -> [B, 256, H, W]
+        
+#         x = self.conv_block(x)
+        
+#         x = self.attention(x)
+        
+#         x = self.pool(x)    # -> [B, 256, 3, 5]
+        
+#         x = self.conv_final(x)
+#         x = F.relu(x)
+        
+#         x = x.view(B, -1)   # Flatten to [B, 256*3*5]
+#         x = self.linear(x)  # Final output: [B, out_features]
+#         return x
+    
 class LaneNet(nn.Module):
     def __init__(self, in_channels, hidden_unit, num_subgraph_layers):
         super(LaneNet, self).__init__()
@@ -92,14 +187,28 @@ class VADHead(DETRHead):
                  bev_h=30,
                  bev_w=30,
                  fut_ts=6,
-                 fut_mode=6,
+                 fut_mode=6, ## Bowen: I think it was 3 somewhere else? --> Need to check it
                  loss_traj=dict(type='L1Loss', loss_weight=0.25),
+                 ###############################################################
+                #  ##L1 Loss
+                #  loss_ego_agent_query=dict(type='L1Loss', loss_weight=1.0),##->to be used
+                #  loss_ego_map_query=dict(type='L1Loss', loss_weight=1.0),
+                #  loss_motion_hs=dict(type='L1Loss', loss_weight=1.0),##->to be used
+
+                 ##Bowen added Cos Similarity Loss
+                 loss_ego_agent_query=dict(type='CosSimLoss', loss_weight=1.0),
+                 loss_image_feats=dict(type='CosSimLoss', loss_weight=1.0),
+                 loss_motion_hs=dict(type='CosSimLoss', loss_weight=1.0),
+                 #### motion_map_query:[1800,1,256]
+                 ###ego_map_query:[1,1,256]
+                 ###############################################################
                  loss_traj_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
                      gamma=2.0,
                      alpha=0.25,
                      loss_weight=0.8),
+                 alignment_weights=[10,10,10],
                  map_bbox_coder=None,
                  map_num_query=900,
                  map_num_classes=3,
@@ -144,9 +253,10 @@ class VADHead(DETRHead):
                  query_thresh=None,
                  query_use_fix_pad=None,
                  ego_lcf_feat_idx=None,
+                #  vlm_out_path=None,
                  valid_fut_ts=6,
                  **kwargs):
-
+        self.alignment_weights = alignment_weights
         self.bev_h = bev_h
         self.bev_w = bev_w
         self.fp16_enabled = False
@@ -154,7 +264,7 @@ class VADHead(DETRHead):
         self.fut_mode = fut_mode
         self.tot_epoch = tot_epoch
         self.use_traj_lr_warmup = use_traj_lr_warmup
-        self.motion_decoder = motion_decoder
+        self.motion_decoder = motion_decoder########
         self.motion_map_decoder = motion_map_decoder
         self.use_pe = use_pe
         self.motion_det_score = motion_det_score
@@ -168,8 +278,8 @@ class VADHead(DETRHead):
         self.query_thresh = query_thresh
         self.query_use_fix_pad = query_use_fix_pad
         self.ego_lcf_feat_idx = ego_lcf_feat_idx
+        ### Bowen: I think the reason why we put clm_ann in the dataloader is to use it here. but how to input what we have in the dataloader (data_queue) to here?
         self.valid_fut_ts = valid_fut_ts
-
         if loss_traj_cls['use_sigmoid'] == True:
             self.traj_num_cls = 1
         else:
@@ -273,6 +383,11 @@ class VADHead(DETRHead):
         
         self.loss_traj = build_loss(loss_traj)
         self.loss_traj_cls = build_loss(loss_traj_cls)
+        ###############################################################
+        self.loss_ego_agent_query = build_loss(loss_ego_agent_query)
+        self.loss_image_feats = build_loss(loss_image_feats)
+        self.loss_motion_hs = build_loss(loss_motion_hs)
+        ###############################################################
         self.loss_map_bbox = build_loss(loss_map_bbox)
         self.loss_map_cls = build_loss(loss_map_cls)
         self.loss_map_iou = build_loss(loss_map_iou)
@@ -282,6 +397,7 @@ class VADHead(DETRHead):
         self.loss_plan_bound = build_loss(loss_plan_bound)
         self.loss_plan_col = build_loss(loss_plan_col)
         self.loss_plan_dir = build_loss(loss_plan_dir)
+        self.processor = ProgressiveFeatureCompressor()##Baiang: added here
 
     def _init_layers(self):
         """Initialize classification branch and regression branch of head."""
@@ -444,6 +560,11 @@ class VADHead(DETRHead):
             bias_init = bias_init_with_prob(0.01)
             for m in self.traj_cls_branches:
                 nn.init.constant_(m[-1].bias, bias_init)
+        ###############################################################
+        # nn.init.constant_(self.ego_agent_query.bias.data[2:], 0.)
+        # nn.init.constant_(self.ego_map_query.bias.data[2:], 0.)
+        # nn.init.constant_(self.motion_hs.bias.data[2:], 0.)
+        ###############################################################
         # for m in self.map_reg_branches:
         #     constant_init(m[-1], 0, bias=0)
         # nn.init.constant_(self.map_reg_branches[0][-1].bias.data[2:], 0.)
@@ -477,6 +598,7 @@ class VADHead(DETRHead):
                     nn.init.xavier_uniform_(p)
 
     # @auto_fp16(apply_to=('mlvl_feats'))
+    ###bOWEN: I guess this is where the CustomCollect3D will be used.
     @force_fp32(apply_to=('mlvl_feats', 'prev_bev'))
     def forward(self,
                 mlvl_feats,
@@ -484,7 +606,7 @@ class VADHead(DETRHead):
                 prev_bev=None,
                 only_bev=False,
                 ego_his_trajs=None,
-                ego_lcf_feat=None,
+                ego_lcf_feat=None
             ):
         """Forward function.
         Args:
@@ -501,8 +623,9 @@ class VADHead(DETRHead):
                 head with normalized coordinate format (cx, cy, w, l, cz, h, theta, vx, vy). \
                 Shape [nb_dec, bs, num_query, 9].
         """
-        
-        bs, num_cam, _, _, _ = mlvl_feats[0].shape
+      
+        bs, num_cam, _, _, _ = mlvl_feats[0].shape  ### mlvl_feats[0] is [1,6,256,12,20]
+           
         dtype = mlvl_feats[0].dtype
         object_query_embeds = self.query_embedding.weight.to(dtype)
         
@@ -637,7 +760,7 @@ class VADHead(DETRHead):
             else:
                 invalid_motion_idx = None
 
-            motion_hs = self.motion_decoder(
+            motion_hs,motion_hs_vlm = self.motion_decoder(###output shape: [1800,1,256]##BL added
                 query=motion_query,
                 key=motion_query,
                 value=motion_query,
@@ -658,11 +781,11 @@ class VADHead(DETRHead):
                     map_thresh=self.map_thresh, dis_thresh=self.dis_thresh,
                     pe_normalization=self.pe_normalization, use_fix_pad=True)
                 map_query = map_query.permute(1, 0, 2)  # [P, B*M, D]
-                ca_motion_query = motion_hs.permute(1, 0, 2).flatten(0, 1).unsqueeze(0)
+                ca_motion_query = motion_hs.permute(1, 0, 2).flatten(0, 1).unsqueeze(0)#[1,256]
 
                 # position encoding
                 if self.use_pe:
-                    (num_query, batch) = ca_motion_query.shape[:2] 
+                    (num_query, batch) = ca_motion_query.shape[:2]#[1,256] 
                     motion_pos = torch.zeros((num_query, batch, 2), device=motion_hs.device)
                     motion_pos = self.pos_mlp(motion_pos)
                     map_pos = map_pos.permute(1, 0, 2)
@@ -670,7 +793,7 @@ class VADHead(DETRHead):
                 else:
                     motion_pos, map_pos = None, None
                 
-                ca_motion_query = self.motion_map_decoder(
+                ca_motion_query, ca_motion_query_vlm = self.motion_map_decoder(##[1,1800,256] Bowen added
                     query=ca_motion_query,
                     key=map_query,
                     value=map_query,
@@ -678,7 +801,7 @@ class VADHead(DETRHead):
                     key_pos=map_pos,
                     key_padding_mask=key_padding_mask)
             else:
-                ca_motion_query = motion_hs.permute(1, 0, 2).flatten(0, 1).unsqueeze(0)
+                ca_motion_query = motion_hs.permute(1, 0, 2).flatten(0, 1).unsqueeze(0)###
 
             batch_size = outputs_coords_bev[-1].shape[0]
             motion_hs = motion_hs.permute(1, 0, 2).unflatten(
@@ -687,7 +810,8 @@ class VADHead(DETRHead):
             ca_motion_query = ca_motion_query.squeeze(0).unflatten(
                 dim=0, sizes=(batch_size, num_agent, self.fut_mode)
             )
-            motion_hs = torch.cat([motion_hs, ca_motion_query], dim=-1)  # [B, A, fut_mode, 2D]
+            motion_hs = torch.cat([motion_hs, ca_motion_query], dim=-1)  # [1, 300, 6, 256*2]
+            # print('motion_hs', motion_hs.shape)
         else:
             raise NotImplementedError('Not implement yet')
 
@@ -707,7 +831,7 @@ class VADHead(DETRHead):
         outputs_trajs_classes = torch.stack(outputs_trajs_classes)
 
         # planning
-        (batch, num_agent) = motion_hs.shape[:2]
+        (batch, num_agent) = motion_hs.shape[:2]##shape:[1,300,6,512]->[1,300]
         if self.ego_his_encoder is not None:
             ego_his_feats = self.ego_his_encoder(ego_his_trajs)  # [B, 1, dim]
         else:
@@ -717,7 +841,7 @@ class VADHead(DETRHead):
         ego_pos = torch.zeros((batch, 1, 2), device=ego_query.device)
         ego_pos_emb = self.ego_agent_pos_mlp(ego_pos)
         agent_conf = outputs_classes[-1]
-        agent_query = motion_hs.reshape(batch, num_agent, -1)
+        agent_query = motion_hs.reshape(batch, num_agent, -1)#[1,300,3072]
         agent_query = self.agent_fus_mlp(agent_query) # [B, A, fut_mode, 2*D] -> [B, A, D]
         agent_pos = outputs_coords_bev[-1]
         agent_query, agent_pos, agent_mask = self.select_and_pad_query(
@@ -726,7 +850,7 @@ class VADHead(DETRHead):
         )
         agent_pos_emb = self.ego_agent_pos_mlp(agent_pos)
         # ego <-> agent interaction
-        ego_agent_query = self.ego_agent_decoder(
+        ego_agent_query,ego_agent_query_vlm = self.ego_agent_decoder(##->[1,1,256]##BL added
             query=ego_query.permute(1, 0, 2),
             key=agent_query.permute(1, 0, 2),
             value=agent_query.permute(1, 0, 2),
@@ -753,8 +877,8 @@ class VADHead(DETRHead):
             score_thresh=self.query_thresh, use_fix_pad=self.query_use_fix_pad
         )
         map_pos_emb = self.ego_map_pos_mlp(map_pos)
-        ego_map_query = self.ego_map_decoder(
-            query=ego_agent_query,
+        ego_map_query,ego_map_query_vlm = self.ego_map_decoder(##output.shape->[1,1,256]##BL added
+            query=ego_agent_query,#[1,1,256]
             key=map_query.permute(1, 0, 2),
             value=map_query.permute(1, 0, 2),
             query_pos=ego_pos_emb.permute(1, 0, 2),
@@ -787,11 +911,21 @@ class VADHead(DETRHead):
                  ego_map_query.permute(1, 0, 2)],
                 dim=-1
             )  # [B, 1, 2D]  
+        ##Bowen added
+        # print('ego_feats.shape', ego_feats.shape)
+        ###motion_hs torch.Size([1, 300, 6, 512])--> latent other agents motion prediction, ego_feats.shape torch.Size([1, 1, 512]) --> ego_planning latent vector
+        
 
         # Ego prediction
         outputs_ego_trajs = self.ego_fut_decoder(ego_feats)
         outputs_ego_trajs = outputs_ego_trajs.reshape(outputs_ego_trajs.shape[0], 
                                                       self.ego_fut_mode, self.fut_ts, 2)
+        
+        ##Baiang: the process should be warped in __init__ and be impelmented in forward.
+        processed_image_feats = self.processor(mlvl_feats)  # [1, 6, 256, 12, 20]->[1,1,512]
+
+        motion_hs_vlm_ca = torch.cat([motion_hs_vlm, ca_motion_query_vlm], dim=-1)
+        ego_feats_vlm = torch.cat([ego_agent_query_vlm, ego_map_query_vlm], dim=-1)
 
         outs = {
             'bev_embed': bev_embed,
@@ -808,8 +942,22 @@ class VADHead(DETRHead):
             'map_enc_bbox_preds': None,
             'map_enc_pts_preds': None,
             'ego_fut_preds': outputs_ego_trajs,
+            # ### Why need the following? we will not calculate the loss --> delete
+            # 'ego_agent_query':ego_agent_query,##[1,1,256]
+            # 'ego_map_query':ego_map_query,##[1,1,256]
+            # 'motion_hs':motion_hs,##[1,300,6,512]: 300 agents, 6 modes, 512 dim (256*2)
+            # 'ca_motion_query':ca_motion_query,##[1,1800,256]->We do not use this
+            # ## The foolowing two needs to be combined later
+            # 'motion_hs_vlm':motion_hs_vlm,##BL added
+            # 'ca_motion_query_vlm':ca_motion_query_vlm,##Bowen added
+            # ## The following two needs to be combined later
+            # 'ego_map_query_vlm':ego_map_query_vlm, ##BL added
+            # 'ego_agent_query_vlm':ego_agent_query_vlm,  ##BL added
+            # 'image_feats': mlvl_feats, ### [1,6,256, 12, 20]
+            'motion_hs_vlm_ca': motion_hs_vlm_ca, # [1, 512]
+            'ego_feats_vlm': ego_feats_vlm, # [1, 512]
+            'processed_image_feats': processed_image_feats, ##[1,1,512]
         }
-
         return outs
 
     def map_transform_box(self, pts, y_first=False):
@@ -1032,8 +1180,8 @@ class VADHead(DETRHead):
                 - num_total_neg (int): Number of negative samples in all \
                     images.
         """
-        assert gt_bboxes_ignore_list is None, \
-            'Only supports for gt_bboxes_ignore setting to None.'
+        # assert gt_bboxes_ignore_list is None, \
+        #     'Only supports for gt_bboxes_ignore setting to None.'
         num_imgs = len(cls_scores_list)
         gt_bboxes_ignore_list = [
             gt_bboxes_ignore_list for _ in range(num_imgs)
@@ -1087,8 +1235,8 @@ class VADHead(DETRHead):
                 - num_total_neg (int): Number of negative samples in all \
                     images.
         """
-        assert gt_bboxes_ignore_list is None, \
-            'Only supports for gt_bboxes_ignore setting to None.'
+        # assert gt_bboxes_ignore_list is None, \
+        #     'Only supports for gt_bboxes_ignore setting to None.'
         num_imgs = len(cls_scores_list)
         gt_bboxes_ignore_list = [
             gt_bboxes_ignore_list for _ in range(num_imgs)
@@ -1239,7 +1387,8 @@ class VADHead(DETRHead):
 
         cls_avg_factor = max(cls_avg_factor, 1)
         loss_cls = self.loss_cls(cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
-
+        ##BL add the loss:
+        
         # Compute the average number of gt boxes accross all gpus, for
         # normalization purposes
         num_total_pos = loss_cls.new_tensor([num_total_pos])
@@ -1255,7 +1404,7 @@ class VADHead(DETRHead):
             normalized_bbox_targets[isnotnan, :10],
             bbox_weights[isnotnan, :10],
             avg_factor=num_total_pos)
-
+        # loss_ego_agent_query = 
         # traj regression loss
         best_traj_preds = self.get_best_fut_preds(
             traj_preds.reshape(-1, self.fut_mode, self.fut_ts, 2),
@@ -1290,15 +1439,17 @@ class VADHead(DETRHead):
         loss_traj_cls = self.loss_traj_cls(
             traj_cls_scores, traj_labels, label_weights, avg_factor=traj_cls_avg_factor
         )
-
         if digit_version(TORCH_VERSION) >= digit_version('1.8'):
             loss_cls = torch.nan_to_num(loss_cls)
             loss_bbox = torch.nan_to_num(loss_bbox)
             loss_traj = torch.nan_to_num(loss_traj)
             loss_traj_cls = torch.nan_to_num(loss_traj_cls)
+            # loss_ego_agent_query = torch.nan_to_num(loss_ego_agent_query)
+            # loss_ego_map_query = torch.nan_to_num(loss_ego_map_query)
+            # loss_motion_hs = torch.nan_to_num(loss_motion_hs)
 
-        return loss_cls, loss_bbox, loss_traj, loss_traj_cls
-
+        # return loss_cls, loss_bbox, loss_traj, loss_traj_cls, loss_ego_agent_query, loss_ego_map_query, loss_motion_hs
+            return loss_cls, loss_bbox, loss_traj, loss_traj_cls
     def get_best_fut_preds(self,
              traj_preds,
              traj_targets,
@@ -1497,6 +1648,7 @@ class VADHead(DETRHead):
              ego_fut_masks,
              ego_fut_cmd,
              gt_attr_labels,
+             vlm_ann,
              gt_bboxes_ignore=None,
              map_gt_bboxes_ignore=None,
              img_metas=None):
@@ -1527,9 +1679,9 @@ class VADHead(DETRHead):
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
         """
-        assert gt_bboxes_ignore is None, \
-            f'{self.__class__.__name__} only supports ' \
-            f'for gt_bboxes_ignore setting to None.'
+        # assert gt_bboxes_ignore is None, \
+        #     f'{self.__class__.__name__} only supports ' \
+        #     f'for gt_bboxes_ignore setting to None.'
 
         map_gt_vecs_list = copy.deepcopy(map_gt_bboxes_list)
 
@@ -1546,6 +1698,16 @@ class VADHead(DETRHead):
         map_enc_bbox_preds = preds_dicts['map_enc_bbox_preds']
         map_enc_pts_preds = preds_dicts['map_enc_pts_preds']
         ego_fut_preds = preds_dicts['ego_fut_preds']
+        # ego_agent_query_vlm = preds_dicts['ego_agent_query_vlm']##BL added
+        # ego_map_query_vlm = preds_dicts['ego_map_query_vlm']##BL added
+        # motion_hs_vlm = preds_dicts['motion_hs_vlm']##BL added
+        # # image_feats = preds_dicts['image_feats'] ##Bowen added
+        # ca_motion_query_vlm = preds_dicts['ca_motion_query_vlm']##Bowen added
+
+        ### Only things necessary for loss need to be passed into LOSS and read
+        ego_feats_vlm = preds_dicts['ego_feats_vlm']##Bowen added
+        motion_hs_vlm_ca = preds_dicts['motion_hs_vlm_ca']##Bowen added
+        processed_image_feats = preds_dicts['processed_image_feats'] ##Bowen added
 
         num_dec_layers = len(all_cls_scores)
         device = gt_labels_list[0].device
@@ -1565,8 +1727,19 @@ class VADHead(DETRHead):
             self.loss_single, all_cls_scores, all_bbox_preds, all_traj_preds,
             all_traj_cls_scores, all_gt_bboxes_list, all_gt_labels_list,
             all_gt_attr_labels_list, all_gt_bboxes_ignore_list)
-        
 
+        ###############################################################
+        ###Baiang:remove the process about image_feats
+        # motion_hs_vlm_ca = torch.cat([motion_hs_vlm, ca_motion_query_vlm], dim=-1)
+        # ego_feats_vlm = torch.cat([ego_agent_query_vlm, ego_map_query_vlm], dim=-1)
+
+        #TODO: change to arguments
+        loss_image_feats = self.loss_image_feats(processed_image_feats.squeeze(), vlm_ann['map'].squeeze().squeeze())*self.alignment_weights[0] ##Bowen #perception
+        loss_ego_agent_query = self.loss_ego_agent_query(ego_feats_vlm, vlm_ann['planning_free'])*self.alignment_weights[2] ##Bowen #plannng
+        # loss_ego_map_query = self.loss_ego_map_query(ego_map_query_vlm, vlm_ann['planning_structure'])*0##BL added
+        loss_motion_hs = self.loss_motion_hs(motion_hs_vlm_ca, vlm_ann['prediction'])*self.alignment_weights[1] ##BL added #prediction
+        
+        ###############################################################
         num_dec_layers = len(map_all_cls_scores)
         device = map_gt_labels_list[0].device
 
@@ -1617,6 +1790,9 @@ class VADHead(DETRHead):
         loss_dict['loss_map_iou'] = map_losses_iou[-1]
         loss_dict['loss_map_pts'] = map_losses_pts[-1]
         loss_dict['loss_map_dir'] = map_losses_dir[-1]
+        loss_dict['loss_ego_agent_query'] = loss_ego_agent_query
+        loss_dict['loss_image_feats'] = loss_image_feats
+        loss_dict['loss_motion_hs'] = loss_motion_hs
 
         # Planning Loss
         ego_fut_gt = ego_fut_gt.squeeze(1)

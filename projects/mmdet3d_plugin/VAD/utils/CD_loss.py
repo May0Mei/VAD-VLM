@@ -716,3 +716,39 @@ class MyChamferDistance(nn.Module):
             return loss_pts, indices1, indices2
         else:
             return loss_pts
+
+@LOSSES.register_module()
+class CosSimLoss(nn.Module):
+    """Cosine Similarity Loss.
+
+    Args:
+        reduction (str): The method used to reduce the loss.
+            Options are 'none', 'mean' and 'sum'.
+        loss_weight (float): The weight of loss.
+    """
+
+    def __init__(self, reduction='mean', loss_weight=1.0):
+        super(CosSimLoss, self).__init__()
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def forward(self, pred, target):
+        """Forward function.
+
+        Args:
+            pred (torch.Tensor): The prediction.
+            target (torch.Tensor): The learning target of the prediction.
+
+        Returns:
+            torch.Tensor: Calculated loss.
+        """
+        pred_norm = F.normalize(pred, p=2, dim=-1)
+        target_norm = F.normalize(target, p=2, dim=-1)
+        ## Compute the cos similarity
+        cos_sim = F.cosine_similarity(pred_norm, target_norm, dim=-1)
+        loss = 1 - cos_sim
+        if self.reduction == 'mean':
+            loss = loss.mean()
+        elif self.reduction == 'sum':
+            loss = loss.sum()
+        return loss * self.loss_weight
