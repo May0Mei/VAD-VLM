@@ -38,7 +38,7 @@ class MLP(nn.Module):
 
 ####Baiang: V1, use this should make sense. Next step: Try spatial attention if this do not work? --> For VAD_tiny version
 class ProgressiveFeatureCompressor(nn.Module):
-    def __init__(self, in_channels=256, num_views=6, out_features=512): #TODO: change to 384
+    def __init__(self, in_channels=256, num_views=6, out_features=512): #DONE: change to 384
         super().__init__()
         self.conv3d_1 = nn.Conv3d(
             in_channels,
@@ -209,6 +209,7 @@ class VADHead(DETRHead):
                      alpha=0.25,
                      loss_weight=0.8),
                  alignment_weights=[10,10,10],
+                 text_feature_encoder=None, #clip, st, st_b
                  map_bbox_coder=None,
                  map_num_query=900,
                  map_num_classes=3,
@@ -397,7 +398,16 @@ class VADHead(DETRHead):
         self.loss_plan_bound = build_loss(loss_plan_bound)
         self.loss_plan_col = build_loss(loss_plan_col)
         self.loss_plan_dir = build_loss(loss_plan_dir)
-        self.processor = ProgressiveFeatureCompressor()##Baiang: added here
+
+        if text_feature_encoder == 'clip':
+            text_feature_dim = 512
+        elif text_feature_encoder == 'st':
+            text_feature_dim = 384
+        elif text_feature_encoder == 'st_b':
+            text_feature_dim = 768
+
+        self.processor = ProgressiveFeatureCompressor(out_features=text_feature_dim)
+        ##Baiang: added here
 
     def _init_layers(self):
         """Initialize classification branch and regression branch of head."""
