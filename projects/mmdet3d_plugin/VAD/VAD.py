@@ -408,7 +408,8 @@ class VAD(MVXTwoStageDetector):
             gt_bbox = gt_bboxes_3d[0][0]
             gt_label = gt_labels_3d[0][0].to('cpu')
             gt_attr_label = gt_attr_labels[0][0].to('cpu')
-            vlm_ann = vlm_ann.to('cpu')
+            if vlm_ann is not None:
+                vlm_ann = vlm_ann.to('cpu')
             fut_valid_flag = bool(fut_valid_flag[0][0])
             # filter pred bbox by score_threshold
             mask = bbox_result['scores_3d'] > score_threshold

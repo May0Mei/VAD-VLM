@@ -363,26 +363,26 @@ data = dict(
     samples_per_gpu=1,
     workers_per_gpu=4,
     train=dict(
-        type=dataset_type,
-        data_root=data_root,
-        ann_file=data_root_ann + 'vad_nuscenes_infos_temporal_train.pkl',
-        vlm_ann_path=vlm_ann_path,
-        keep_frame_idx = [3, 8, 13], #small dataset
-        pipeline=train_pipeline,
-        classes=class_names,
-        modality=input_modality,
-        test_mode=False,
-        use_valid_flag=True,
-        bev_size=(bev_h_, bev_w_),
-        pc_range=point_cloud_range,
-        queue_length=queue_length,
-        map_classes=map_classes,
-        map_fixed_ptsnum_per_line=map_fixed_ptsnum_per_gt_line,
-        map_eval_use_same_gt_sample_num_flag=map_eval_use_same_gt_sample_num_flag,
-        # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
-        # and box_type_3d='Depth' in sunrgbd and scannet dataset.
-        box_type_3d='LiDAR',
-        custom_eval_version='vad_nusc_detection_cvpr_2019'),
+             type=dataset_type,
+             data_root=data_root,
+             ann_file=data_root_ann + 'vad_nuscenes_infos_temporal_train.pkl',
+             vlm_ann_path=vlm_ann_path,
+             keep_frame_idx = [3, 8, 13], #small dataset
+             pipeline=train_pipeline,
+             classes=class_names,
+             modality=input_modality,
+             test_mode=False,
+             use_valid_flag=True,
+             bev_size=(bev_h_, bev_w_),
+             pc_range=point_cloud_range,
+             queue_length=queue_length,
+             map_classes=map_classes,
+             map_fixed_ptsnum_per_line=map_fixed_ptsnum_per_gt_line,
+             map_eval_use_same_gt_sample_num_flag=map_eval_use_same_gt_sample_num_flag,
+             # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
+             # and box_type_3d='Depth' in sunrgbd and scannet dataset.
+             box_type_3d='LiDAR',
+             custom_eval_version='vad_nusc_detection_cvpr_2019'),
     val=dict(type=dataset_type,
              data_root=data_root,
              pc_range=point_cloud_range,
@@ -438,16 +438,16 @@ log_config = dict(
     hooks=[
         dict(type='TextLoggerHook'),
         # dict(type='TensorboardLoggerHook'),
-        # dict(
-        #     type='WandbLoggerHook',
-        #     init_kwargs=dict(
-        #         project='vad-vlm',
-        #         name='experiment-0327',
-        #         config=dict(lr=2e-4, epochs=60),  # optional: track config here
-        #     ),
-        #     interval=10,
-        #     by_epoch=True,
-        # )
+        dict(
+            type='WandbLoggerHook',
+            init_kwargs=dict(
+                project='vad-vlm',
+                name='p1p2p3-clip-test',
+                config=dict(lr=2e-4, epochs=total_epochs),  # optional: track config here
+            ),
+            interval=10,
+            by_epoch=True,
+        )
     ])
 # fp16 = dict(loss_scale=512.)
 # find_unused_parameters = True
