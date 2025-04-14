@@ -440,16 +440,16 @@ log_config = dict(
     hooks=[
         dict(type='TextLoggerHook'),
         # dict(type='TensorboardLoggerHook'),
-        # dict(
-        #     type='WandbLoggerHook',
-        #     init_kwargs=dict(
-        #         project='vad-vlm',
-        #         name='experiment-0327',
-        #         config=dict(lr=2e-4, epochs=60),  # optional: track config here
-        #     ),
-        #     interval=10,
-        #     by_epoch=True,
-        # )
+        dict(
+            type='WandbLoggerHook',
+            init_kwargs=dict(
+                project='vad-vlm',
+                name='test_p1p2p3_st',
+                config=dict(lr=2e-4, epochs=total_epochs),  # optional: track config here
+            ),
+            interval=10,
+            by_epoch=True,
+        )
     ])
 # fp16 = dict(loss_scale=512.)
 # find_unused_parameters = True
