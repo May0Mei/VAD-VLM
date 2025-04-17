@@ -36,10 +36,63 @@ class MLP(nn.Module):
         x = self.mlp(x)
         return x
 
-####Baiang: V1, use this should make sense. Next step: Try spatial attention if this do not work? --> For VAD_tiny version
+# ####Baiang: V1, use this should make sense. Next step: Try spatial attention if this do not work? --> For VAD_tiny version
+# class ProgressiveFeatureCompressor(nn.Module):
+#     def __init__(self, in_channels=256, num_views=6, out_features=512): #DONE: change to 384
+#         super().__init__()
+#         self.conv3d_1 = nn.Conv3d(
+#             in_channels,
+#             256,
+#             kernel_size=(num_views, 3, 3),
+#             stride=(1, 1, 1),
+#             padding=(0, 1, 1)
+#         )
+#         self.conv2d_block = nn.Sequential(
+#             nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+#             nn.ReLU(inplace=True),
+#             nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+#             nn.ReLU(inplace=True)
+#         )
+#         self.conv2d_final = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+#         ### Bowen: If BASE model change to the next line
+#         self.linear = nn.Linear(256 * 3 * 5, out_features) ### for the tiny
+#         # self.linear = nn.Linear(256 * 23 * 40, out_features) ### for teh base
+        
+#     def forward(self, x):
+#         x=x[0]#[B,6,256,12,20]
+#         B = x.shape[0]#[B]
+#         x = x.permute(0, 2, 1, 3, 4)  # [B, 256, 6, 12, 20]
+#         x = self.conv3d_1(x)# [B, 256, 1, 12, 20]
+#         x = F.relu(x)# [B, 256, 1, 12, 20]
+#         x = x.squeeze(2)# [B, 256, 12, 20]
+#         x = self.conv2d_block(x)# [B, 256, 3, 5]
+#         x = self.conv2d_final(x)#[B, 256, 3, 5]
+#         x = F.relu(x)
+#         x = x.view(B, -1)#[B, 256*3*5]
+#         x = self.linear(x)#[B, 512]
+#         return x
+
+### Begin VAD_base MLP version ###
+
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        self.conv = nn.Conv2d(2, 1, kernel_size=kernel_size, padding=kernel_size//2)
+    
+    def forward(self, x):
+        # Compute average and max along channel dimension
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        x_cat = torch.cat([avg_out, max_out], dim=1)
+        attention = torch.sigmoid(self.conv(x_cat))
+        return x * attention
+
 class ProgressiveFeatureCompressor(nn.Module):
-    def __init__(self, in_channels=256, num_views=6, out_features=512): #DONE: change to 384
+    def __init__(self, in_channels=256, num_views=6, out_features=768, use_attention=False): ### Bowen: if it is ST, use out_features = 384, else clip uses 512, ow is for ST
         super().__init__()
+        self.use_attention = use_attention
+        
+        # Collapse the view dimension using a 3D convolution.
         self.conv3d_1 = nn.Conv3d(
             in_channels,
             256,
@@ -47,90 +100,48 @@ class ProgressiveFeatureCompressor(nn.Module):
             stride=(1, 1, 1),
             padding=(0, 1, 1)
         )
-        self.conv2d_block = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+        
+        self.block = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),  # 96x160 -> 48x80
             nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),  # 48x80 -> 24x40
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),  # 24x40 -> 12x20
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),  # 12x20 -> 6x10
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),  # 6x10 -> 3x5
             nn.ReLU(inplace=True)
         )
+        
+        if self.use_attention:
+            self.spatial_attention = SpatialAttention(kernel_size=7)
+        
         self.conv2d_final = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
-        ### Bowen: If BASE model change to the next line
-        self.linear = nn.Linear(256 * 3 * 5, out_features) ### for the tiny
-        # self.linear = nn.Linear(256 * 23 * 40, out_features) ### for teh base
         
+        self.linear = nn.Linear(256 * 3 * 5, out_features)
+
     def forward(self, x):
-        x=x[0]#[B,6,256,12,20]
-        B = x.shape[0]#[B]
-        x = x.permute(0, 2, 1, 3, 4)  # [B, 256, 6, 12, 20]
-        x = self.conv3d_1(x)# [B, 256, 1, 12, 20]
-        x = F.relu(x)# [B, 256, 1, 12, 20]
-        x = x.squeeze(2)# [B, 256, 12, 20]
-        x = self.conv2d_block(x)# [B, 256, 3, 5]
-        x = self.conv2d_final(x)#[B, 256, 3, 5]
+        x = x[0]  
+        B = x.shape[0]
+        
+        x = x.permute(0, 2, 1, 3, 4)
+        x = self.conv3d_1(x)  # -> [B, 256, 1, H, W] where H=96, W=160
         x = F.relu(x)
-        x = x.view(B, -1)#[B, 256*3*5]
-        x = self.linear(x)#[B, 512]
+        x = x.squeeze(2)      # -> [B, 256, 96, 160]
+        
+        x = self.block(x)     # -> [B, 256, 3, 5]
+        
+        if self.use_attention:
+            x = self.spatial_attention(x)
+        
+        x = self.conv2d_final(x)
+        x = F.relu(x)
+        
+        x = x.view(B, -1)     # -> [B, 256*3*5]
+        x = self.linear(x)    # -> [B, 512]
         return x
-
-
-# class SpatialAttention(nn.Module):
-#     def __init__(self, kernel_size=7):
-#         super(SpatialAttention, self).__init__()
-#         self.conv = nn.Conv2d(2, 1, kernel_size=kernel_size, padding=kernel_size // 2)
-    
-#     def forward(self, x):
-#         avg_out = torch.mean(x, dim=1, keepdim=True)
-#         max_out, _ = torch.max(x, dim=1, keepdim=True)
-#         x_cat = torch.cat([avg_out, max_out], dim=1)
-#         attention = torch.sigmoid(self.conv(x_cat))
-#         return x * attention
-
-# class ProgressiveFeatureCompressor(nn.Module):   #### For VAD_base version
-#     def __init__(self, in_channels=256, num_views=6, out_features=512, use_attention=False):
-#         super().__init__()
-#         self.conv3d = nn.Conv3d(
-#             in_channels,
-#             256,
-#             kernel_size=(num_views, 3, 3),
-#             stride=(1, 1, 1),
-#             padding=(0, 1, 1)
-#         )
-        
-#         self.conv_block = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-#             nn.BatchNorm2d(256),
-#             nn.ReLU(inplace=True)
-#         )
-        
-#         self.attention = SpatialAttention(kernel_size=7) if use_attention else nn.Identity()
-        
-#         self.pool = nn.AdaptiveAvgPool2d((3, 5))
-        
-#         self.conv_final = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
-        
-#         self.linear = nn.Linear(256 * 3 * 5, out_features)
-    
-#     def forward(self, x):
-#         x = x[0] 
-#         B = x.shape[0]
-        
-#         x = x.permute(0, 2, 1, 3, 4)
-#         x = self.conv3d(x)  # -> [B, 256, 1, H, W]
-#         x = F.relu(x)
-#         x = x.squeeze(2)    # -> [B, 256, H, W]
-        
-#         x = self.conv_block(x)
-        
-#         x = self.attention(x)
-        
-#         x = self.pool(x)    # -> [B, 256, 3, 5]
-        
-#         x = self.conv_final(x)
-#         x = F.relu(x)
-        
-#         x = x.view(B, -1)   # Flatten to [B, 256*3*5]
-#         x = self.linear(x)  # Final output: [B, out_features]
-#         return x
+### Ends VAD Base MLP version ###
     
 class LaneNet(nn.Module):
     def __init__(self, in_channels, hidden_unit, num_subgraph_layers):

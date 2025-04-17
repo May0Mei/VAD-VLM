@@ -792,10 +792,11 @@ class CustomTransformerDecoder_Motion_his_agent_map(TransformerLayerSequence):
         if self.return_intermediate:
             return torch.stack(intermediate)
         ### The input is [1, 1800, 256] --> different f rom agent-agent [1800, 1, 256]
-        pooled = query.mean(dim=1)
-        out=self.post_mlp(pooled)
-        out=out.unsqueeze(0)
-        return query,out
+        # pooled = query.mean(dim=1)
+        out=self.post_mlp(query)
+        out_vlm = out.view(1, -1, 1800, 256).mean(dim=2)
+
+        return query,out_vlm
 
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module() ## Bowen
@@ -1032,10 +1033,10 @@ class CustomTransformerDecoder_Motion_his_agent_map_st(TransformerLayerSequence)
         if self.return_intermediate:
             return torch.stack(intermediate)
         ### The input is [1, 1800, 256] --> different f rom agent-agent [1800, 1, 256]
-        pooled = query.mean(dim=1)
-        out=self.post_mlp(pooled)
-        out=out.unsqueeze(0)
-        return query,out
+        # pooled = query.mean(dim=1)
+        out=self.post_mlp(query)
+        out_vlm = out.view(1, -1, 1800, 192).mean(dim=2)
+        return query,out_vlm
 
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module() ## May
@@ -1273,11 +1274,11 @@ class CustomTransformerDecoder_Motion_his_agent_map_st_b(TransformerLayerSequenc
         if self.return_intermediate:
             return torch.stack(intermediate)
         ### The input is [1, 1800, 256] --> different f rom agent-agent [1800, 1, 256]
-        pooled = query.mean(dim=1)
-        out=self.post_mlp(pooled)
-        out=out.unsqueeze(0)
-        return query,out
-
+        # pooled = query.mean(dim=1)
+        out=self.post_mlp(query)
+        out_vlm = out.view(1, -1, 1800, 384).mean(dim=2)
+        return query,out_vlm
+    
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module() ## May
 class CustomTransformerDecoder_ego_agent_planning_st_b(TransformerLayerSequence):

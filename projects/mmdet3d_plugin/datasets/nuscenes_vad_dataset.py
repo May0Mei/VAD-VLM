@@ -1190,7 +1190,11 @@ class VADCustomNuScenesDataset(NuScenesDataset):
         
         # load vlm annotations
         scene_id = self.scene_token2id_dict[scene_token]
+        frame_queue = max(0, frame_idx - self.queue_length)
         vlm_traj_id = scene_id*100 + frame_idx - self.queue_length
+        if frame_queue > 21 and frame_queue < 44:
+            if not vlm_traj_id in self.vlm_ann_dict:
+                return None
         data_queue[-1]['vlm_ann'] = self.vlm_ann_dict[vlm_traj_id]
         
         # print("-----------------------------------------------------------")
@@ -1442,13 +1446,7 @@ class VADCustomNuScenesDataset(NuScenesDataset):
         if self.test_mode:
             return self.prepare_test_data(idx)
         while True:
-            try:
-                data = self.prepare_train_data(idx)
-                # print("idx", idx, "is recognized!")
-            except:
-                # print(idx, "is not recognized!")
-                idx = self._rand_another(idx)
-                continue
+            data = self.prepare_train_data(idx)
             if data is None:
                 idx = self._rand_another(idx)
                 continue
